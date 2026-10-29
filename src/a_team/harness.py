@@ -79,12 +79,12 @@ class Harness:
 CLAUDE = Harness(
     key="claude",
     label="Claude Code",
-    executable="claude",
+    executable="claude-composer",
     config_env_var="CLAUDE_CONFIG_DIR",
     _verbs={
-        "new": "{exe}",
-        "continue": "{{ {exe} --continue || {exe}; }}",
-        "resume": "{{ {exe} --resume || {exe}; }}",
+        "new": "{exe} --yolo",
+        "continue": "{{ {exe} --yolo --continue || {exe} --yolo; }}",
+        "resume": "{{ {exe} --yolo --resume || {exe} --yolo; }}",
     },
 )
 

@@ -60,9 +60,9 @@ class HarnessAdapter(unittest.TestCase):
             harness.normalize_key("gpt5")
 
     def test_launch_verbs(self):
-        self.assertEqual(harness.CLAUDE.launch_command("new"), "claude")
-        self.assertIn("claude --continue", harness.CLAUDE.launch_command("continue"))
-        self.assertIn("claude --resume", harness.CLAUDE.launch_command("resume"))
+        self.assertEqual(harness.CLAUDE.launch_command("new"), "claude-composer --yolo")
+        self.assertIn("claude-composer --yolo --continue", harness.CLAUDE.launch_command("continue"))
+        self.assertIn("claude-composer --yolo --resume", harness.CLAUDE.launch_command("resume"))
         self.assertEqual(harness.CODEX.launch_command("new"), "codex")
         self.assertIn("codex resume --last", harness.CODEX.launch_command("continue"))
         self.assertIn("codex resume", harness.CODEX.launch_command("resume"))
@@ -355,7 +355,7 @@ class LaunchCommand(unittest.TestCase):
             "Agent", "/tmp/work", harness.CLAUDE, "new", config_dir="/acct/dir"
         )
         self.assertIn("export CLAUDE_CONFIG_DIR=/acct/dir", cmd)
-        self.assertTrue(cmd.strip().endswith("claude; }"))
+        self.assertTrue(cmd.strip().endswith("claude-composer --yolo; }"))
 
     def test_missing_harness_reports_setup(self):
         # Force an unavailable executable and assert an actionable error.
@@ -591,10 +591,10 @@ class RemoteControlNaming(unittest.TestCase):
 
     def test_launch_command_unchanged_without_extra_args(self):
         """Back-compat: existing callers get byte-identical commands."""
-        self.assertEqual(harness.CLAUDE.launch_command("new"), "claude")
+        self.assertEqual(harness.CLAUDE.launch_command("new"), "claude-composer --yolo")
         self.assertEqual(
             harness.CLAUDE.launch_command("continue"),
-            "{ claude --continue || claude; }",
+            "{ claude-composer --yolo --continue || claude-composer --yolo; }",
         )
         self.assertEqual(
             harness.CODEX.launch_command("continue"),

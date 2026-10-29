@@ -1,25 +1,14 @@
-"""Spawn Ghostty windows running Claude Code.
+"""Spawn terminal windows running Claude Code.
 
-Approach: open a new window in the *existing* Ghostty instance via the
-File > New Window menu (AppleScript / System Events), then deliver the
-launch command by **clipboard paste** (Cmd-V), not by keystroking it.
+Supports two terminal backends, selectable via `a-team config terminal`:
 
-Why not keystroke the command (the old approach): System Events
-`keystroke` types faster than a GPU terminal absorbs on long strings and
-silently drops characters — notably spaces — mangling the command into
-something bash can't parse (`trap"kill$TPID..."`, `cd'...'&&claude`). It's
-also racy. Pasting is atomic: the whole command lands intact regardless
-of length.
+  **Ghostty** (default): opens a new window via the File > New Window menu
+  (AppleScript / System Events), then delivers the launch command by
+  clipboard paste (Cmd-V). Pasting is atomic — no dropped characters.
 
-Why not `open -na Ghostty.app --args -e <cmd>` (native launch): it works
-and needs no accessibility, but on macOS each call spawns a *separate*
-Ghostty instance (no single-instance option exists), which fragments a
-session manager that opens many windows. The menu approach keeps every
-agent window in one instance.
-
-The command itself is set on the clipboard with `pbcopy` (via stdin), so
-it never passes through AppleScript string escaping — no quoting layers
-to get wrong. The clipboard is saved and restored around the paste.
+  **iTerm**: uses iTerm's native scripting model — `create window with
+  default profile` / `create tab with default profile` and `write text` to
+  deliver commands directly. No clipboard touching required.
 
 Title persistence: claude emits its own OSC-0 title sequences, which
 would clobber a one-time printf. A backgrounded loop re-emits the agent
@@ -108,6 +97,79 @@ end tell
 """
 
 
+# ---------------------------------------------------------------------------
+# iTerm AppleScript templates — `write text` delivers the command directly,
+# so no clipboard save/restore is needed.
+# ---------------------------------------------------------------------------
+
+_ITERM_APPLESCRIPT = '''\
+tell application "iTerm" to activate
+tell application "iTerm"
+    create window with default profile
+    tell current session of current window
+        write text "<COMMAND>"
+    end tell
+end tell'''
+
+_ITERM_APPLESCRIPT_TAB = '''\
+tell application "iTerm" to activate
+tell application "iTerm"
+    if (count of windows) is 0 then
+        create window with default profile
+    else
+        tell current window
+            create tab with default profile
+        end tell
+    end if
+    tell current session of current window
+        write text "<COMMAND>"
+    end tell
+end tell'''
+
+
+def _escape_for_applescript(s: str) -> str:
+    r"""Escape a string for embedding in an AppleScript double-quoted literal.
+
+    AppleScript string literals use ``"..."`` and recognise only ``\\`` and
+    ``\"`` as escape sequences — everything else is literal.
+    """
+    return s.replace("\\", "\\\\").replace('"', '\\"')
+
+
+def _deliver_ghostty(command: str, *, tab: bool = False) -> None:
+    """Deliver *command* via Ghostty's clipboard-paste approach."""
+    try:
+        prev = subprocess.run(["pbpaste"], capture_output=True).stdout
+    except Exception:
+        prev = b""
+    subprocess.run(["pbcopy"], input=command.encode(), check=True)
+    try:
+        subprocess.run(["osascript", "-e",
+                        _APPLESCRIPT_TAB if tab else _APPLESCRIPT], check=True)
+    finally:
+        try:
+            subprocess.run(["pbcopy"], input=prev, check=False)
+        except Exception:
+            pass
+
+
+def _deliver_iterm(command: str, *, tab: bool = False) -> None:
+    """Deliver *command* via iTerm's ``write text`` — no clipboard needed."""
+    template = _ITERM_APPLESCRIPT_TAB if tab else _ITERM_APPLESCRIPT
+    script = template.replace("<COMMAND>", _escape_for_applescript(command))
+    subprocess.run(["osascript", "-e", script], check=True)
+
+
+def _deliver(command: str, *, tab: bool = False) -> None:
+    """Open a terminal window/tab and run *command* in it."""
+    from . import config as _config
+    terminal = _config.get_terminal()
+    if terminal == "iterm":
+        _deliver_iterm(command, tab=tab)
+    else:
+        _deliver_ghostty(command, tab=tab)
+
+
 def _validate(name: str, path: str) -> None:
     """Reject inputs that would break the launch command's quoting."""
     if any(ch in name for ch in ("'", "\n", "\r")):
@@ -146,6 +208,13 @@ def _build_command(
     # it can never be given a chosen name. See toolkit/TRAPS.md.
     rc_args = harness.remote_control_args(display_name)
     engine_cmd = harness.launch_command(session_mode, rc_args)
+    # Auto-init project tooling (idempotent, no-ops if already set up)
+    inits = (
+        '{ command -v codegraph >/dev/null 2>&1 && [ ! -d .codegraph ] '
+        '&& codegraph init; } 2>/dev/null; '
+        'npx ruflo@latest init wizard 2>/dev/null; '
+    )
+    engine_cmd = inits + engine_cmd
     # Account config is a local-machine concept (CLAUDE_CONFIG_DIR). A remote
     # host runs under its OWN login, so we never export it across the SSH hop.
     env = harness.env_prefix(config_dir) if not h.is_remote else ""
@@ -172,11 +241,11 @@ def open_agent(
     host: str = _hosts.DEFAULT_HOST,
     session: str | None = None,
 ) -> None:
-    """Open a new Ghostty window for the agent under the chosen harness.
+    """Open a terminal window for the agent under the chosen harness.
 
-    Opens a window in the running Ghostty instance, sets the title to
-    `name` (kept set via a re-emit loop), cd's into `path`, and runs the
-    harness. `session_mode` selects how it starts:
+    Opens a window in the configured terminal (Ghostty or iTerm), sets the
+    title to `name` (kept set via a re-emit loop), cd's into `path`, and
+    runs the harness. `session_mode` selects how it starts:
       - "continue": resume the most-recent session in this dir (fresh fallback)
       - "new":      a fresh session
       - "resume":   the harness's own past-session picker (fresh fallback)
@@ -211,23 +280,7 @@ def open_agent(
     command = _build_command(
         display_name, path, h, session_mode, config_dir, host=target, session=session
     )
-
-    # Save the clipboard, set our command, paste it, restore. pbcopy via stdin
-    # means the command never hits AppleScript escaping.
-    try:
-        prev = subprocess.run(["pbpaste"], capture_output=True).stdout
-    except Exception:
-        prev = b""
-    subprocess.run(["pbcopy"], input=command.encode(), check=True)
-    try:
-        subprocess.run(["osascript", "-e", _APPLESCRIPT], check=True)
-    finally:
-        # Restore the user's clipboard (best-effort; the paste has already
-        # been consumed by the time osascript returns).
-        try:
-            subprocess.run(["pbcopy"], input=prev, check=False)
-        except Exception:
-            pass
+    _deliver(command)
 
 
 TMUX_BIN = "/opt/homebrew/bin/tmux"
@@ -270,15 +323,7 @@ def tmux_sessions(host: str = _hosts.DEFAULT_HOST) -> list[str] | None:
 
 def attach_window(session: str, host: str = _hosts.DEFAULT_HOST,
                   tab: bool = False) -> None:
-    """Open a Ghostty window attached to an existing session on `host`.
-
-    Never `open -na Ghostty`: -n starts a separate copy of the application
-    every time, and six accumulated that way in one evening. macOS offers no
-    way to ask a running app for a new window from the command line, so this
-    drives File > New Window the same way open_agent does.
-
-    MOSH_TITLE_NOPREFIX stops mosh prefixing every tab with "[mosh] ", which
-    pushed the distinguishing part of the name off the end of the tab.
+    """Open a terminal window attached to an existing session on `host`.
 
     `tab` opens it as a tab in the frontmost window instead of its own window,
     which is how a row of Associates is normally arranged.
@@ -286,15 +331,7 @@ def attach_window(session: str, host: str = _hosts.DEFAULT_HOST,
     Attach-or-create, not attach. `tmux attach -t` exits when the session is not
     there, which leaves a dead window with no error on screen: over mosh it keeps
     showing the last frame it received, so a frozen window reads as an idle one.
-    After a reboot that is every window opened this way, while the ones launched
-    through Host.launch_command, which already used `new-session -A`, reattach
-    themselves. Fourteen windows needed rescuing by hand and three never could,
-    because they named sessions that had since been renamed.
-
-    So use the same attach-or-create the launch path uses. The only change in
-    behaviour is that opening a window for a session that does not exist now
-    creates an empty one instead of failing, which is what `a-team open` has
-    always done.
+    So use the same attach-or-create the launch path uses.
     """
     target = _hosts.get(host)
     tmux_cmd = f"{TMUX_BIN} new-session -A -s {shlex.quote(session)}"
@@ -303,26 +340,13 @@ def attach_window(session: str, host: str = _hosts.DEFAULT_HOST,
             _hosts.reconnecting_attach(target.ssh_alias, tmux_cmd)
     else:
         command = tmux_cmd
-
-    try:
-        prev = subprocess.run(["pbpaste"], capture_output=True).stdout
-    except Exception:
-        prev = b""
-    subprocess.run(["pbcopy"], input=command.encode(), check=True)
-    try:
-        subprocess.run(["osascript", "-e",
-                        _APPLESCRIPT_TAB if tab else _APPLESCRIPT], check=True)
-    finally:
-        try:
-            subprocess.run(["pbcopy"], input=prev, check=False)
-        except Exception:
-            pass
+    _deliver(command, tab=tab)
 
 
 def open_all(agents: list[dict], delay_between: float = 1.0) -> None:
-    """Open Ghostty windows for every agent, respecting each agent's saved
+    """Open terminal windows for every agent, respecting each agent's saved
     harness AND resolved account config (both previously dropped here), with a
-    small delay so Ghostty settles between menu clicks."""
+    small delay so the terminal settles between opens."""
     from . import config  # local import avoids a module-load cycle
 
     for agent in config._normalized(agents):
