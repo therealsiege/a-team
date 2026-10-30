@@ -75,7 +75,7 @@ class Host:
             return False
 
     def launch_command(self, path: str, engine_cmd: str, session: str) -> str:
-        """The command the Ghostty window runs.
+        """The command the terminal window runs.
 
         local: cd into the folder and start the engine.
         remote: attach-or-create a named tmux session on that host, so the agent

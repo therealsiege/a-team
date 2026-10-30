@@ -166,6 +166,14 @@ def get_default_host() -> str:
         return _hosts.DEFAULT_HOST
 
 
+def get_terminal() -> str:
+    """Terminal app: 'ghostty' or 'iterm'. Default ghostty."""
+    raw = get_setting("terminal")
+    if raw and raw.strip().lower() in ("iterm", "ghostty"):
+        return raw.strip().lower()
+    return "ghostty"
+
+
 def get_default_parent() -> Path | None:
     """Return the default parent directory for scaffolded agents, or None."""
     raw = get_setting("default_parent")

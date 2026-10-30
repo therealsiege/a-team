@@ -673,6 +673,29 @@ def config_default_host(host_key: str | None, unset: bool) -> None:
     ui.info(f"Set default_host → {key}")
 
 
+@config_cmd.command("terminal")
+@click.argument("value", required=False, default=None)
+@click.option("--unset", is_flag=True, help="Clear the terminal setting (back to ghostty).")
+def config_terminal(value: str | None, unset: bool) -> None:
+    """Set which terminal app agent windows open in.
+
+    Accepted values: 'ghostty' (default) or 'iterm'.
+    """
+    if unset:
+        config.set_setting("terminal", None)
+        ui.info("Cleared terminal (back to ghostty).")
+        return
+    if not value:
+        print(config.get_terminal())
+        return
+    v = value.strip().lower()
+    if v not in ("ghostty", "iterm"):
+        ui.error(f"unknown terminal: {value!r} (expected 'ghostty' or 'iterm').")
+        sys.exit(1)
+    config.set_setting("terminal", v)
+    ui.info(f"Set terminal → {v}")
+
+
 @cli.command("rm")
 @click.argument("name")
 def rm_cmd(name: str) -> None:
