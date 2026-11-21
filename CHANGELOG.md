@@ -6,6 +6,12 @@ This file roughly follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0
 
 ## [Unreleased]
 
+### Added
+- **`cmux_bin`** under `[settings]` (or `$A_TEAM_CMUX`) names the cmux CLI to drive, for a Mac where
+  another program called `cmux` comes first on PATH, such as the cmux TUI's. When the `cmux` a-team
+  finds rejects `ping` as an unknown command, it now says that it is not cmux.app's CLI and how to
+  point at the right one, instead of reporting cmux as not running.
+
 ## [0.9.1] - 2026-11-16
 
 ### Fixed

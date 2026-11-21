@@ -115,6 +115,22 @@ class CmuxAvailability(unittest.TestCase):
         self.assertTrue(ok)
         self.assertEqual(fake.envs[0].get("CMUX_QUIET"), "1")
 
+    def test_another_cmux_on_path_is_named_with_the_fix(self):
+        fake = FakeCmux(ping=_cp("", 'cmux: unknown resource scope "ping". Did you mean `pane`?', 2))
+        with mock.patch.object(terminals.subprocess, "run", fake):
+            ok, why = self.t.available()
+        self.assertFalse(ok)
+        self.assertIn("is not cmux.app's CLI", why)
+        self.assertIn("cmux_bin", why)
+        self.assertIn(terminals.CMUX_APP_BIN, why)
+
+    def test_cmux_not_running_is_still_reported_as_such(self):
+        fake = FakeCmux(ping=_cp("", "Error: Socket not found", 1))
+        with mock.patch.object(terminals.subprocess, "run", fake):
+            ok, why = self.t.available()
+        self.assertFalse(ok)
+        self.assertIn("not running", why)
+
     def test_password_env_setting_is_passed_in_env_not_argv(self):
         fake = FakeCmux()
         t = terminals.Cmux(binary=__file__, password_env="MY_CMUX_PW")
@@ -264,3 +280,25 @@ class SpawnUsesBackend(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class CmuxBinary(unittest.TestCase):
+    """Which cmux CLI a-team drives: setting, then $A_TEAM_CMUX, then PATH."""
+
+    def test_setting_wins_and_expands_home(self):
+        with mock.patch.dict(os.environ, {"A_TEAM_CMUX": "/from/env/cmux"}):
+            t = terminals.make("cmux", {"cmux_bin": "~/bin/cmux"})
+        self.assertEqual(t.binary, os.path.expanduser("~/bin/cmux"))
+
+    def test_env_var_beats_path(self):
+        with mock.patch.dict(os.environ, {"A_TEAM_CMUX": "/from/env/cmux"}), \
+                mock.patch.object(terminals.shutil, "which", return_value="/on/path/cmux"):
+            t = terminals.make("cmux", {})
+        self.assertEqual(t.binary, "/from/env/cmux")
+
+    def test_path_when_nothing_is_set(self):
+        env = {k: v for k, v in os.environ.items() if k != "A_TEAM_CMUX"}
+        with mock.patch.dict(os.environ, env, clear=True), \
+                mock.patch.object(terminals.shutil, "which", return_value="/on/path/cmux"):
+            t = terminals.make("cmux", {})
+        self.assertEqual(t.binary, "/on/path/cmux")

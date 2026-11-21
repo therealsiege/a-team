@@ -338,6 +338,13 @@ color = "Teal"             # a cmux color name (Red, Teal, Navy, ...) or "#hex"
 
 **Session colors.** With no `color` field, an agent's workspace takes its accent from a shared session-colors table (tab-separated `match tint accent`; first match on the session or agent name wins), the one the toolkit's tmux tint reads. To set an agent's color, edit `config/session-colors.tsv` in the toolkit and land it: new sessions and workspaces pick it up, `session-color <tmux-session>` (on the M3) or `session-color --all` re-tints running tmux sessions, and `cmux-layout colors` recolors open cmux workspaces. `a-team color <name>` prints an agent's tint and accent, and `a-team resolve --json` and `ls --json` carry both. The table is `$SESSION_COLORS`, else `session_colors` under `[settings]`, else `~/agents/toolkit/config/session-colors.tsv`.
 
+**Which cmux.** a-team drives cmux.app through its CLI: `cmux_bin` under `[settings]`, else `$A_TEAM_CMUX`, else the first `cmux` on PATH, else `/opt/homebrew/bin/cmux`. Name it when another program called `cmux` comes first on PATH (the cmux TUI ships one); a-team says so when the `cmux` it found does not know `ping`.
+
+```toml
+[settings]
+cmux_bin = "/Applications/cmux.app/Contents/Resources/bin/cmux"
+```
+
 cmux only takes commands from processes it started. To drive it from another terminal, set a socket password in cmux Settings and `export CMUX_SOCKET_PASSWORD=...`, or run `a-team` from inside cmux. To read the password from a variable of your own, set `cmux_password_env = "VARNAME"` under `[settings]`. With no variable set, a-team reads `~/.config/cmux/socket-password` if it exists.
 
 ## The cmux workflow

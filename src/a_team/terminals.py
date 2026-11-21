@@ -194,6 +194,9 @@ class Ghostty(Terminal):
 # ---------------------------------------------------------------------------
 
 CMUX_DEFAULT_BIN = "/opt/homebrew/bin/cmux"
+# cmux.app's CLI, when a different program named cmux comes first on PATH (the cmux TUI ships one).
+CMUX_BIN_VAR = "A_TEAM_CMUX"
+CMUX_APP_BIN = "/Applications/cmux.app/Contents/Resources/bin/cmux"
 CMUX_PASSWORD_VAR = "CMUX_SOCKET_PASSWORD"
 # Read when no variable carries the password. Keep it chmod 600.
 CMUX_PASSWORD_FILE = os.path.expanduser("~/.config/cmux/socket-password")
@@ -229,6 +232,13 @@ def parse_workspace_list(text: str) -> dict[str, str]:
     return out
 
 
+def _not_cmux_app(out: str) -> bool:
+    """True when the program that answered is some other `cmux`: it rejects `ping` as an
+    unknown command rather than failing to reach a running cmux.app."""
+    o = out.lower()
+    return "unknown" in o and ("ping" in o or "scope" in o or "command" in o)
+
+
 class Cmux(Terminal):
     """A workspace in cmux, driven through its CLI.
 
@@ -236,6 +246,10 @@ class Cmux(Terminal):
     a workspace of that exact name selects it instead of creating a second
     one. The a-team window group becomes a cmux workspace group, created
     idempotently, and the registry's `color` field colors the workspace.
+
+    The CLI is `[settings] cmux_bin`, else $A_TEAM_CMUX, else the first `cmux`
+    on PATH, else /opt/homebrew/bin/cmux. Name it when another program called
+    cmux shadows cmux.app's own.
 
     cmux accepts socket commands only from processes it started, unless a
     password is supplied. The password is read from CMUX_SOCKET_PASSWORD (or
@@ -246,7 +260,9 @@ class Cmux(Terminal):
     name = "cmux"
 
     def __init__(self, binary: str | None = None, password_env: str | None = None):
-        self.binary = binary or shutil.which("cmux") or CMUX_DEFAULT_BIN
+        chosen = binary or os.environ.get(CMUX_BIN_VAR)
+        self.binary = (os.path.expanduser(chosen) if chosen
+                       else shutil.which("cmux") or CMUX_DEFAULT_BIN)
         self.password_env = password_env
         self.groups: dict[str, str] = {}  # group name -> ref, made this run
 
@@ -288,6 +304,10 @@ class Cmux(Terminal):
         if "access denied" in out.lower():
             return False, f"cmux refused the connection: {_ACCESS_FIX}"
         if r.returncode != 0:
+            if _not_cmux_app(out):
+                return False, (f"{self.binary} is not cmux.app's CLI (it did not know `ping`: "
+                               f"{out.strip()}). Set cmux_bin under [settings] or ${CMUX_BIN_VAR}, "
+                               f"for example {CMUX_APP_BIN}")
             return False, f"cmux is not running or not answering ({out.strip()})"
         return True, ""
 
@@ -342,7 +362,7 @@ TERMINALS: dict[str, type[Terminal]] = {
 
 def make(name: str, settings: dict) -> Terminal:
     if name == "cmux":
-        return Cmux(password_env=settings.get("cmux_password_env"))
+        return Cmux(binary=settings.get("cmux_bin"), password_env=settings.get("cmux_password_env"))
     return TERMINALS[name]()
 
 
