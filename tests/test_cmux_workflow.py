@@ -291,6 +291,33 @@ class Send(unittest.TestCase):
         self.assertEqual(n, ["notify", "--workspace", "workspace:4", "--title", "Builder",
                              "--body", "needs you: approve?", "--desktop", "false"])
 
+    def test_on_signal_runs_detached_with_the_event_in_its_env(self):
+        fake = FakeCmux(workspaces="  workspace:4  Client-A\n")
+        with mock.patch.object(notify.subprocess, "Popen") as popen:
+            ok, _ = self.send(fake, "needs-input", text="approve?", session="builder",
+                              settings={"on_signal": "tell-board"})
+        self.assertTrue(ok)
+        (call,) = popen.call_args_list
+        self.assertEqual(call.args[0], "tell-board")
+        self.assertTrue(call.kwargs["start_new_session"])
+        env = call.kwargs["env"]
+        self.assertEqual((env["A_TEAM_EVENT"], env["A_TEAM_AGENT"], env["A_TEAM_TEXT"]),
+                         ("needs-input", "Builder", "approve?"))
+
+    def test_on_signal_runs_even_when_no_workspace_is_open(self):
+        fake = FakeCmux(workspaces="")
+        with mock.patch.object(notify.subprocess, "Popen") as popen:
+            ok, _ = self.send(fake, ref="ops", settings={"on_signal": "tell-board"})
+        self.assertFalse(ok)
+        self.assertEqual(popen.call_count, 1)
+
+    def test_on_signal_respects_the_rate_rules_and_never_raises(self):
+        fake = FakeCmux(workspaces="  workspace:5  Ops\n")
+        with mock.patch.object(notify.subprocess, "Popen", side_effect=OSError("no shell")) as popen:
+            self.assertTrue(self.send(fake, ref="ops", settings={"on_signal": "x"})[0])
+            self.assertFalse(self.send(fake, ref="ops", settings={"on_signal": "x"})[0])
+        self.assertEqual(popen.call_count, 1)
+
     def test_second_done_is_rate_limited(self):
         fake = FakeCmux(workspaces="  workspace:5  Ops\n")
         self.assertTrue(self.send(fake, ref="ops")[0])

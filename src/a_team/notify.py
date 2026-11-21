@@ -13,6 +13,12 @@ The last "done" time per agent is kept in a locked JSON file, because several
 hooks can fire at once.
 
 Off switch: create ~/.config/a-team/signal-off.
+
+`[settings] on_signal` names a shell command to run after every signal that
+passes the rate rules, whether or not a workspace was marked: a way to tell
+another system (a task board, a phone) without wrapping the hook. It runs
+detached, so the hook returns at once, with A_TEAM_EVENT, A_TEAM_AGENT,
+A_TEAM_AGENT_ID, A_TEAM_TEXT and A_TEAM_KIND in its environment.
 """
 
 from __future__ import annotations
@@ -138,7 +144,8 @@ def _log(line: str) -> None:
 
 def send(event: str, *, text: str = "", kind: str = "", ref: str | None = None,
          agents: list[dict] | None = None, desks: list[dict] | None = None,
-         cmux=None, session: str | None = None, cwd: str | None = None) -> tuple[bool, str]:
+         cmux=None, session: str | None = None, cwd: str | None = None,
+         settings: dict | None = None) -> tuple[bool, str]:
     """Resolve the agent and its workspace, apply the rate rules, notify.
 
     Returns (notified, outcome). Never raises for an expected failure: a hook
@@ -170,8 +177,11 @@ def send(event: str, *, text: str = "", kind: str = "", ref: str | None = None,
         _log(f"{tag} -> {why}")
         return False, why
     body = body_for(event, text)
+    if settings is None:  # a caller that passes its own cmux (a test) passes settings too
+        settings = config.load_settings() if cmux is None else {}
+    run_on_signal(settings.get("on_signal"), event, agent, text, kind, tag)
     if cmux is None:
-        cmux = terminals.make("cmux", config.load_settings())
+        cmux = terminals.make("cmux", settings)
     try:
         listed = cmux.workspaces()
         wref = listed.get(workspace) or next(
@@ -185,6 +195,24 @@ def send(event: str, *, text: str = "", kind: str = "", ref: str | None = None,
         return False, f"not sent: {e}"
     _log(f"{tag} ref={wref} -> notified")
     return True, f"notified {workspace} ({wref}): {body}"
+
+
+def run_on_signal(command: str | None, event: str, agent: dict, text: str, kind: str,
+                  tag: str = "") -> bool:
+    """Start `[settings] on_signal`, detached; True if it started. Never raises."""
+    if not command:
+        return False
+    env = dict(os.environ, A_TEAM_EVENT=event, A_TEAM_AGENT=str(agent.get("name", "")),
+               A_TEAM_AGENT_ID=str(agent.get("id", "")), A_TEAM_TEXT=text or "",
+               A_TEAM_KIND=kind or "")
+    try:
+        subprocess.Popen(command, shell=True, env=env, stdin=subprocess.DEVNULL,
+                         stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
+                         start_new_session=True)
+    except OSError as e:
+        _log(f"{tag} -> on_signal did not start: {e}")
+        return False
+    return True
 
 
 def read_payload(stream) -> dict:

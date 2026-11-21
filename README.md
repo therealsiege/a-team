@@ -347,6 +347,16 @@ cmux_bin = "/Applications/cmux.app/Contents/Resources/bin/cmux"
 
 cmux only takes commands from processes it started. To drive it from another terminal, set a socket password in cmux Settings and `export CMUX_SOCKET_PASSWORD=...`, or run `a-team` from inside cmux. To read the password from a variable of your own, set `cmux_password_env = "VARNAME"` under `[settings]`. With no variable set, a-team reads `~/.config/cmux/socket-password` if it exists.
 
+**Telling something else.** `on_signal` under `[settings]` runs a shell command after every signal
+that passes the rate rules, detached so the hook returns at once, with `A_TEAM_EVENT` (`done` or
+`needs-input`), `A_TEAM_AGENT`, `A_TEAM_AGENT_ID`, `A_TEAM_TEXT` and `A_TEAM_KIND` in its environment.
+It runs whether or not a workspace was marked.
+
+```toml
+[settings]
+on_signal = "~/bin/tell-the-board"
+```
+
 ## The cmux workflow
 
 cmux shows many agents at once and flags the ones waiting for you. Three pieces make it work.

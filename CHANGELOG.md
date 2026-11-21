@@ -11,6 +11,9 @@ This file roughly follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0
   another program called `cmux` comes first on PATH, such as the cmux TUI's. When the `cmux` a-team
   finds rejects `ping` as an unknown command, it now says that it is not cmux.app's CLI and how to
   point at the right one, instead of reporting cmux as not running.
+- **`on_signal`** under `[settings]`: a shell command run after every `a-team signal` that passes the
+  rate rules, detached, with the event, agent and message in `A_TEAM_*` variables. Lets a hook tell
+  another system (a task board, a phone) without wrapping `a-team signal`.
 
 ## [0.9.1] - 2026-11-16
 
