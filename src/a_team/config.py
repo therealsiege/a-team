@@ -78,11 +78,82 @@ def _render(data: dict, existing: str | None) -> bytes:
         return tomli_w.dumps(data).encode()
     doc = tomlkit.parse(existing)
     for key, value in data.items():
-        if key not in doc or doc[key] != value:
+        if key not in doc or doc[key] == value:
+            if key not in doc:
+                doc[key] = value
+            continue
+        if not (_is_table_list(value) and _merge_tables(doc, key, value)):
             doc[key] = value
     for key in [k for k in doc if k not in data]:
         del doc[key]
     return tomlkit.dumps(doc).encode()
+
+
+def _is_table_list(value) -> bool:
+    return isinstance(value, list) and bool(value) and all(isinstance(v, dict) for v in value)
+
+
+def _row_key(row) -> str | None:
+    return row.get("id") or row.get("name")
+
+
+def _trailing(table) -> list:
+    """The comments and blank lines at the end of a table's body. In tomlkit they
+    belong to that table, but they are the header of whatever comes NEXT (the
+    `# ---- Clients` line before the next [[agent]]), so they move with position,
+    not with the table."""
+    body = table.value.body
+    cut = len(body)
+    while cut and body[cut - 1][0] is None and isinstance(
+            body[cut - 1][1], (tomlkit.items.Comment, tomlkit.items.Whitespace)):
+        cut -= 1
+    tail = body[cut:]
+    del body[cut:]
+    return tail
+
+
+def _merge_tables(doc, key: str, rows: list[dict]) -> bool:
+    """Update an array of tables ([[agent]], [[desk]]) row by row instead of
+    replacing it, so the section comments between rows survive an edit. Rows are
+    matched by id, else name. Returns False (caller replaces the whole array)
+    when the rows can't be matched or the order changed."""
+    aot = doc[key]
+    if not isinstance(aot, tomlkit.items.AoT):
+        return False
+    old_keys = [_row_key(t) for t in aot]
+    new_keys = [_row_key(r) for r in rows]
+    if None in old_keys or None in new_keys or len(set(new_keys)) != len(new_keys):
+        return False
+    kept = [k for k in old_keys if k in new_keys]
+    if kept != [k for k in new_keys if k in old_keys]:
+        return False  # reordered: positions, and so comments, no longer line up
+
+    end = _trailing(aot[-1]) if len(aot) else []
+    for i in reversed(range(len(aot))):
+        if old_keys[i] not in new_keys:
+            tail = _trailing(aot[i])  # the next row's header
+            if i:
+                aot[i - 1].value.body.extend(tail)
+            elif i + 1 < len(aot):
+                # No row before it: keep the header by moving it ahead of the array.
+                pos = next(n for n, (k, _) in enumerate(doc.body) if k is not None and str(k) == key)
+                if pos and isinstance(doc.body[pos - 1][1], tomlkit.items.Table):
+                    doc.body[pos - 1][1].value.body.extend(tail)
+            del aot[i]
+    by_key = {_row_key(t): t for t in aot}
+    for row in rows:
+        table = by_key.get(_row_key(row))
+        if table is None:
+            aot.append(tomlkit.item(row))
+            continue
+        for k, v in row.items():
+            if k not in table or table[k] != v:
+                table[k] = v
+        for k in [k for k in table if k not in row]:
+            del table[k]
+    if len(aot):
+        aot[-1].value.body.extend(end)
+    return True
 
 
 def _save_raw(data: dict) -> None:
@@ -496,6 +567,7 @@ def add_agent(
     host: str | None = None,
     create_dir: bool = False,
     manifest: dict | None = None,
+    fields: dict | None = None,
 ) -> dict:
     """Append a new agent with a stable id, saved harness, and host.
 
@@ -505,7 +577,10 @@ def add_agent(
     ON THAT MACHINE over SSH, never against this filesystem. `account` is an
     explicit override; leave None to let the category rule decide the Claude
     account. `harness` defaults to Claude Code. `manifest` is the role,
-    customer, skills and model keys (see manifest()), written after the rest."""
+    customer, skills and model keys (see manifest()), written after the rest.
+    `fields` (boot, parent, mcp...) go into the same write: a shared registry
+    lands each save as its own change, so a second save after this one can
+    fail on its own and silently drop them."""
     if find_agent(name):
         raise ValueError(f"agent '{name}' already exists")
     host_key = _hosts.normalize_key(host)
@@ -529,6 +604,8 @@ def add_agent(
         agent["account"] = account
     if manifest:
         agent.update(manifest)
+    if fields:
+        agent.update(fields)
     agents.append(agent)
     save_agents(agents)
     return agent

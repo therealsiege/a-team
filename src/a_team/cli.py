@@ -561,13 +561,8 @@ def new_cmd(name: str, path: str | None, category: str | None, account: str | No
         # With no path given, mirror the local convention: ~/agents/<slug>.
         resolved = path or f"~/agents/{config.slugify(name)}"
 
-    try:
-        agent = config.add_agent(name, resolved, category=category, account=account, harness=harness, host=host_key, create_dir=True,
-                                 manifest=manifest)
-    except ValueError as e:
-        ui.error(str(e))
-        sys.exit(1)
-
+    # Everything goes into ONE save: the shared registry lands each save as its
+    # own change, and a second save that failed on its own used to drop boot.
     extra: dict = {}
     if parent:
         extra["parent"] = parent["id"]
@@ -575,14 +570,18 @@ def new_cmd(name: str, path: str | None, category: str | None, account: str | No
         # same client must see that tenant and no other, and must be fenced off
         # other customers' folders. Derive BOTH halves from the account rather
         # than copying whichever the parent happened to have recorded.
-        mcp, settings = config.grant_paths(agent.get("account"))
+        mcp, settings = config.grant_paths(account)
         if mcp:
             extra["mcp"] = mcp
             extra["settings"] = settings
     if boot:
         extra["boot"] = True
-    if extra:
-        agent = config.set_fields(agent["name"], **extra)
+    try:
+        agent = config.add_agent(name, resolved, category=category, account=account, harness=harness, host=host_key, create_dir=True,
+                                 manifest=manifest, fields=extra)
+    except ValueError as e:
+        ui.error(str(e))
+        sys.exit(1)
     cat_suffix = f", {agent['category']}" if agent.get("category") else ""
     ui.info(f"Added agent '{agent['name']}' ({agent['harness']}, host={agent['host']}{cat_suffix}) → {agent['path']}")
     if parent:
